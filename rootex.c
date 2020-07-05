@@ -182,6 +182,21 @@ int main(int argc, char *argv[]){
        			printf("bytes decoded: %d\n", count);
         		outputDst += count;
 			}
+			else if(*(uint32_t*)inputDst == LZFSE_COMPRESSEDV1_BLOCK_MAGIC) {
+				printf("START LZFSE COMPRESSED BLOCK WITH UNCOMPRESSED TABLES: %#lx\n", (inputDst-inputMap)); // Print the offset of the magic
+				
+				int BLOCK_END_OFF = 0;
+				
+				while(*(uint32_t*)inputDst+BLOCK_END_OFF != LZFSE_ENDOFSTREAM_BLOCK_MAGIC) {
+					BLOCK_END_OFF++;
+				}
+
+				printf("END OF STREAM: %#lx\n", BLOCK_END_OFF);
+        
+				count = lzfse_decode_buffer(outputDst, 4*size, inputDst, size, NULL); // Decompress the data
+       			printf("bytes decoded: %d\n", count);
+        		outputDst += count;
+			}
 
 		}
 		inputDst++;
