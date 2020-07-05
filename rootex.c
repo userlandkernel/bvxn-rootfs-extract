@@ -9,7 +9,13 @@
 #include <fcntl.h>
 #include <lzfse.h>
 
-#define BVXN_MAGIC "bvxn"
+#define LZFSE_NO_BLOCK_MAGIC             0x00000000 // 0    (invalid)
+#define LZFSE_ENDOFSTREAM_BLOCK_MAGIC    0x24787662 // bvx$ (end of stream)
+#define LZFSE_UNCOMPRESSED_BLOCK_MAGIC   0x2d787662 // bvx- (raw data)
+#define LZFSE_COMPRESSEDV1_BLOCK_MAGIC   0x31787662 // bvx1 (lzfse compressed, uncompressed tables)
+#define LZFSE_COMPRESSEDV2_BLOCK_MAGIC   0x32787662 // bvx2 (lzfse compressed, compressed tables)
+#define LZFSE_COMPRESSEDLZVN_BLOCK_MAGIC 0x6e787662 // bvxn (lzvn compressed)
+
 
 void usage(void) {
 	printf("Usage: rootex [/path/to/bvxn_rootfs.dmg] [/path/to/raw_output_rootfs.bin]\n");
@@ -144,7 +150,7 @@ int main(int argc, char *argv[]){
 	outputFile = open_output_file(outputFilePath);
 
 	// Map the output file into the memory
-	outputMap = map_output_file(outputFile, size);
+	outputMap = map_output_file(outputFile, size*4);
 
 	// Decode the file
   
@@ -160,15 +166,23 @@ int main(int argc, char *argv[]){
     // Never read OOB
 		if(bytesRemain > 4) {
     
-			if(*(uint32_t*)BVXN_MAGIC == *(uint32_t*)inputDst) { // Check if bvxn magic is found
+			if(*(uint32_t*)inputDst == LZFSE_COMPRESSEDLZVN_BLOCK_MAGIC) { // Check if bvxn magic is found
       
-				printf("OFF: %#lx\n", (inputDst-inputMap)); // Print the offset of the magic
+				printf("START LZVN COMPRESSED BLOCK: %#lx\n", (inputDst-inputMap)); // Print the offset of the magic
+				
+				int BLOCK_END_OFF = 0;
+				
+				while(*(uint32_t*)inputDst+BLOCK_END_OFF != LZFSE_ENDOFSTREAM_BLOCK_MAGIC) {
+					BLOCK_END_OFF++;
+				}
+
+				printf("END OF STREAM: %#lx\n", BLOCK_END_OFF);
         
-				count = lzfse_decode_buffer(outputDst, size, inputDst, size, NULL); // Decompress the data
-        printf("bytes decoded: %d\n", count);
-        outputDst += count;
+				count = lzfse_decode_buffer(outputDst, 4*size, inputDst, size, NULL); // Decompress the data
+       			printf("bytes decoded: %d\n", count);
+        		outputDst += count;
 			}
-      
+
 		}
 		inputDst++;
 	}
