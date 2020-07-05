@@ -9,6 +9,8 @@
 #include <fcntl.h>
 #include <lzfse.h>
 
+#define BVXN_MAGIC "bvxn"
+
 void usage(void) {
 	printf("Usage: rootex [/path/to/bvxn_rootfs.dmg] [/path/to/raw_output_rootfs.bin]\n");
 }
@@ -149,7 +151,7 @@ int main(int argc, char *argv[]){
 	int count = 0;
   
 	char* outputDst = outputMap;
-	char* inputDst = inputMap+0xe3f705f9;
+	char* inputDst = inputMap;
   
 	while(inputDst != inputMap+size) {
   
@@ -158,7 +160,7 @@ int main(int argc, char *argv[]){
     // Never read OOB
 		if(bytesRemain > 4) {
     
-			if(*(uint32_t*)"bvxn" == *(uint32_t*)inputDst) { // Check if bvxn magic is found
+			if(*(uint32_t*)BVXN_MAGIC == *(uint32_t*)inputDst) { // Check if bvxn magic is found
       
 				printf("OFF: %#lx\n", (inputDst-inputMap)); // Print the offset of the magic
         
