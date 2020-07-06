@@ -7,67 +7,9 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <lzfse.h>
-
-#define LZFSE_ENCODE_L_SYMBOLS 20
-#define LZFSE_ENCODE_M_SYMBOLS 20
-#define LZFSE_ENCODE_D_SYMBOLS 64
-#define LZFSE_ENCODE_LITERAL_SYMBOLS 256
-
-#define LZFSE_NO_BLOCK_MAGIC             0x00000000 // 0    (invalid)
-#define LZFSE_ENDOFSTREAM_BLOCK_MAGIC    0x24787662 // bvx$ (end of stream)
-#define LZFSE_UNCOMPRESSED_BLOCK_MAGIC   0x2d787662 // bvx- (raw data)
-#define LZFSE_COMPRESSEDV1_BLOCK_MAGIC   0x31787662 // bvx1 (lzfse compressed, uncompressed tables)
-#define LZFSE_COMPRESSEDV2_BLOCK_MAGIC   0x32787662 // bvx2 (lzfse compressed, compressed tables)
-#define LZFSE_COMPRESSEDLZVN_BLOCK_MAGIC 0x6e787662 // bvxn (lzvn compressed)
-
-typedef struct {
-  //  Magic number, always LZFSE_COMPRESSEDV1_BLOCK_MAGIC.
-  uint32_t magic;
-  //  Number of decoded (output) bytes in block.
-  uint32_t n_raw_bytes;
-  //  Number of encoded (source) bytes in block.
-  uint32_t n_payload_bytes;
-  //  Number of literal bytes output by block (*not* the number of literals).
-  uint32_t n_literals;
-  //  Number of matches in block (which is also the number of literals).
-  uint32_t n_matches;
-  //  Number of bytes used to encode literals.
-  uint32_t n_literal_payload_bytes;
-  //  Number of bytes used to encode matches.
-  uint32_t n_lmd_payload_bytes;
-
-  //  Final encoder states for the block, which will be the initial states for
-  //  the decoder:
-  //  Final accum_nbits for literals stream.
-  int32_t literal_bits;
-  //  There are four interleaved streams of literals, so there are four final
-  //  states.
-  uint16_t literal_state[4];
-  //  accum_nbits for the l, m, d stream.
-  int32_t lmd_bits;
-  //  Final L (literal length) state.
-  uint16_t l_state;
-  //  Final M (match length) state.
-  uint16_t m_state;
-  //  Final D (match distance) state.
-  uint16_t d_state;
-
-  //  Normalized frequency tables for each stream. Sum of values in each
-  //  array is the number of states.
-  uint16_t l_freq[LZFSE_ENCODE_L_SYMBOLS];
-  uint16_t m_freq[LZFSE_ENCODE_M_SYMBOLS];
-  uint16_t d_freq[LZFSE_ENCODE_D_SYMBOLS];
-  uint16_t literal_freq[LZFSE_ENCODE_LITERAL_SYMBOLS];
-} lzfse_compressed_block_header_v1;
-
-
-void print_lzfsev1_header(lzfse_compressed_block_header_v1* header) {
-	printf("Magic: %#x\n", header->magic);
-	printf("Output count: %u bytes\n", header->n_raw_bytes);
-	printf("Source count: %u bytes\n", header->n_payload_bytes);
-}
-
+//#include <pthread.h> // In the future we'll support threads :)
+#include "apfs.h"
+#include "lzfsedec.h"
 
 void usage(void) {
 	printf("Usage: rootex (-o [optional, offset in hex]) [/path/to/bvxn_rootfs.dmg] [/path/to/raw_output_rootfs.bin]\n");
@@ -227,11 +169,12 @@ int main(int argc, char *argv[]){
 	char* outputDst = outputMap;
 	char* inputDst = inputMap;
   
+  	int dot = 0;
+
 	while(inputDst != inputMap+size) {
-  
-    int bytesRemain = (inputMap + size) - inputDst;
+    	int bytesRemain = (inputMap + size) - inputDst;
     
-    // Never read OOB
+    	// Never read OOB
 		if(bytesRemain > 4) {
     
 			if(*(uint32_t*)inputDst == LZFSE_COMPRESSEDLZVN_BLOCK_MAGIC) { // Check if bvxn magic is found
@@ -249,6 +192,7 @@ int main(int argc, char *argv[]){
        			printf("bytes decoded: %d\n", count);
         		outputDst += count;
 			}
+
 			else if(*(uint32_t*)inputDst == LZFSE_COMPRESSEDV1_BLOCK_MAGIC) {
 				printf("START LZFSE COMPRESSED BLOCK WITH UNCOMPRESSED TABLES: %#lx\n", (inputDst-inputMap)); // Print the offset of the magic
 				
@@ -265,6 +209,14 @@ int main(int argc, char *argv[]){
 
 				count = lzfse_decode_buffer((uint8_t*)outputDst, header->n_raw_bytes, (const uint8_t*)inputDst, header->n_payload_bytes, NULL); // Decompress the data
        			printf("bytes decoded: %d\n", count);
+
+       			if(*(uint32_t*)outputDst == *(uint32_t*)"APSB") {
+       				printf("Got APFS VOLUME SUPERBLOCK!\n");
+       			}
+       			else if(*(uint32_t*)outputDst == *(uint32_t*)"NXSB") {
+       				printf("Got APFS CONTAINER SUPERBLOCK!\n");
+       			}
+
         		outputDst += count;
 			}
 			else if(*(uint32_t*)inputDst == LZFSE_COMPRESSEDV2_BLOCK_MAGIC) {
@@ -280,15 +232,57 @@ int main(int argc, char *argv[]){
 
 				count = lzfse_decode_buffer((uint8_t*)outputDst, size*4, (const uint8_t*)inputDst, size, NULL); // Decompress the data
        			printf("bytes decoded: %d\n", count);
+
+       			/*if(*(uint32_t*)outputDst == *(uint32_t*)"APSB") {
+       				printf("Got APFS VOLUME SUPERBLOCK!\n");
+       			}
+       			else if(*(uint32_t*)outputDst == *(uint32_t*)"NXSB") {
+       				printf("Got APFS CONTAINER SUPERBLOCK!\n");
+       			}*/
+
         		outputDst += count;
 			}
 
 		}
+		dot++;
 		inputDst++;
 	}
 
 	// Close the input file
 	close(inputFile);
+
+
+/*
+
+	// Backup end of file
+	char* EOF_DST = outputDst;
+
+	// Reset pointer to begin of file
+	outputDst = outputMap;
+
+	// Reset dot counter
+	dot = 0;
+
+	printf("Finding APFS volumes, please wait...\n");
+	// While not at end of file and can read 32-bits
+	while(outputDst != EOF_DST && (EOF_DST - outputDst) > 4) {
+		if(*(uint32_t*)outputDst == *(uint32_t*)"APSB") {
+			// Get volume name
+			printf("APFS VOLUME: %#lx\n", (outputDst - outputMap));
+
+			// Cast to superblock
+			apfs_superblock_t* SUPERBLOCK = (apfs_superblock_t*)outputDst;
+
+			// Skip if it doesn't have a name
+			if(!*SUPERBLOCK->volume_name) continue;
+
+			printf("Name: %s\n", SUPERBLOCK->volume_name);
+		}
+		dot++;
+		outputDst++;
+	}
+
+	*/
 
 	// Close the output file
 	close(outputFile);
